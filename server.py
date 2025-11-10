@@ -1,14 +1,16 @@
-from fastapi import FastAPI, File, UploadFile
-from typing_extensions import Annotated
+from fastapi import FastAPI, UploadFile
 import uvicorn
-from utils import *
+import json
+import numpy as np
+from graph import Graph
+from node import Node
 from dijkstra import dijkstra
 
-# create FastAPI app
 app = FastAPI()
 
-# global variable for active graph
+# global variable to hold the active graph
 active_graph = None
+
 
 @app.get("/")
 async def root():
@@ -16,30 +18,34 @@ async def root():
 
 
 @app.post("/upload_graph_json/")
-async def create_upload_file(file: UploadFile):
+async def upload_graph(file: UploadFile):
+    """
+    Upload a JSON file containing an edge list to build the graph.
+    Example JSON entry:
+    {"source": "0", "target": "1", "weight": 1, "bidirectional": true}
+    """
     global active_graph
 
-    # 1. Check file type
+    # Check file type
     if not file.filename.endswith(".json"):
         return {"Upload Error": "Invalid file type"}
 
-    # 2. Read file content
-    content = await file.read()
-    import json
     try:
-        active_graph = json.loads(content)
-    except json.JSONDecodeError:
-        return {"Upload Error": "Invalid JSON format"}
-    
-    G = Graph()
+        # Read and parse JSON file
+        content = await file.read()
+        edges = json.loads(content)
+    except Exception as e:
+        return {"Upload Error": f"Invalid JSON format: {str(e)}"}
 
+    # Build the Graph
+    G = Graph()
     for e in edges:
         src_id = str(e["source"])
         tgt_id = str(e["target"])
         w = float(e["weight"])
         bidir = bool(e.get("bidirectional", True))
 
-        # Add nodes if not exist
+        # Add nodes if not already in the graph
         if src_id not in G.nodes:
             G.add_node(Node(src_id))
         if tgt_id not in G.nodes:
@@ -49,14 +55,20 @@ async def create_upload_file(file: UploadFile):
         G.add_edge(G.nodes[src_id], G.nodes[tgt_id], w, bidirectional=bidir)
 
     active_graph = G
-
-    # 3. Return success
-    return {"Upload Success": file.filename}
+    return {
+        "Upload Success": file.filename,
+        "num_nodes": len(G.nodes),
+        "num_edges": len(edges)
+    }
 
 
 @app.get("/solve_shortest_path/start_node_id={start_node_id}&end_node_id={end_node_id}")
-async def get_shortest_path(start_node_id: str, end_node_id: str):
+async def solve_shortest_path(start_node_id: str, end_node_id: str):
+    """
+    Compute the shortest path between two node IDs using Dijkstra.
+    """
     global active_graph
+
     if active_graph is None:
         return {"Solver Error": "No active graph uploaded"}
 
@@ -71,10 +83,10 @@ async def get_shortest_path(start_node_id: str, end_node_id: str):
     start_node = active_graph.nodes[start_node_id]
     end_node = active_graph.nodes[end_node_id]
 
-    # Run Dijkstra
+    # Run Dijkstra algorithm
     dijkstra(active_graph, start_node)
 
-    # Reconstruct path
+    # Reconstruct shortest path
     path = []
     current = end_node
     while current is not None:
@@ -87,7 +99,7 @@ async def get_shortest_path(start_node_id: str, end_node_id: str):
 
     return {"shortest_path": path, "total_distance": total_distance}
 
+
 if __name__ == "__main__":
     print("Server is running at http://localhost:8080")
     uvicorn.run(app, host="0.0.0.0", port=8080)
-    
